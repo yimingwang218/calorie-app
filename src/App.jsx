@@ -1,5 +1,16 @@
 import React, { useState } from 'react';
-import { Plus, Search, TrendingUp, Apple, Flame, Activity, Loader2 } from 'lucide-react';
+import { Plus, Search, Apple, Loader2, TrendingUp, BarChart3, Cloud, CloudOff } from 'lucide-react';
+
+// Firebase 配置
+const firebaseConfig = {
+  apiKey: "AIzaSyDWQ3z_lvhgPMwa-lO3y5r_w4bj06M2k_M",
+  authDomain: "calorie-1456b.firebaseapp.com",
+  projectId: "calorie-1456b",
+  storageBucket: "calorie-1456b.firebasestorage.app",
+  messagingSenderId: "413125107773",
+  appId: "1:413125107773:web:77ddcf613a9930ec92ca54",
+  measurementId: "G-YKVTQ98X1N"
+};
 
 const CalorieTrackerApp = () => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -7,9 +18,134 @@ const CalorieTrackerApp = () => {
   const [showSearch, setShowSearch] = useState(false);
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
-  const [apiKey, setApiKey] = useState('');
-  const [showApiKeyInput, setShowApiKeyInput] = useState(false); // 改为 false，先不强制要求 API Key
-  const [useLocalDatabase, setUseLocalDatabase] = useState(true); // 默认使用本地数据库
+  const [apiKey] = useState('acPbPSwq8ZnpG2NkkW3MW1DLyumVpYJZLBoBHWmM');
+  const [useLocalDatabase, setUseLocalDatabase] = useState(false);
+  const [selectedFood, setSelectedFood] = useState(null);
+  const [customGrams, setCustomGrams] = useState('100');
+  const [mealTime, setMealTime] = useState('breakfast');
+  const [customDate, setCustomDate] = useState(new Date().toISOString().split('T')[0]);
+  const [customTime, setCustomTime] = useState(new Date().toTimeString().slice(0, 5));
+  const [allHistory, setAllHistory] = useState({});
+  const [viewDate, setViewDate] = useState(new Date().toISOString().split('T')[0]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [editingEntry, setEditingEntry] = useState(null); // 正在编辑的条目 {date, index, entry}
+  const [isEditing, setIsEditing] = useState(false); // 是否处于编辑模式
+  const [showCharts, setShowCharts] = useState(false); // 显示图表
+  const [chartType, setChartType] = useState('calories'); // calories, protein, carbs, fat
+  const [firebaseEnabled, setFirebaseEnabled] = useState(false); // Firebase 是否启用
+  const [isSyncing, setIsSyncing] = useState(false); // 是否正在同步
+  const [userId, setUserId] = useState(() => {
+    // 生成或获取唯一用户ID
+    let id = localStorage.getItem('calorieAppUserId');
+    if (!id) {
+      id = 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      localStorage.setItem('calorieAppUserId', id);
+    }
+    return id;
+  });
+
+  // Firebase 同步函数
+  const syncToFirebase = async (data) => {
+    if (!firebaseEnabled) return;
+    
+    setIsSyncing(true);
+    try {
+      const response = await fetch(
+        `https://firestore.googleapis.com/v1/projects/calorie-1456b/databases/(default)/documents/users/${userId}`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            fields: {
+              history: {
+                stringValue: JSON.stringify(data)
+              },
+              lastUpdated: {
+                timestampValue: new Date().toISOString()
+              }
+            }
+          })
+        }
+      );
+      
+      if (!response.ok) {
+        console.error('Firebase sync failed:', response.status);
+      }
+    } catch (error) {
+      console.error('Firebase sync error:', error);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // 从 Firebase 加载数据
+  const loadFromFirebase = async () => {
+    if (!firebaseEnabled) return;
+    
+    setIsSyncing(true);
+    try {
+      const response = await fetch(
+        `https://firestore.googleapis.com/v1/projects/calorie-1456b/databases/(default)/documents/users/${userId}`,
+        {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          }
+        }
+      );
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.fields?.history?.stringValue) {
+          const cloudHistory = JSON.parse(data.fields.history.stringValue);
+          setAllHistory(cloudHistory);
+          localStorage.setItem('calorieHistory', JSON.stringify(cloudHistory));
+        }
+      }
+    } catch (error) {
+      console.error('Firebase load error:', error);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // 从 localStorage 加载历史数据
+  React.useEffect(() => {
+    const saved = localStorage.getItem('calorieHistory');
+    if (saved) {
+      try {
+        setAllHistory(JSON.parse(saved));
+      } catch (e) {
+        console.error('Failed to load history:', e);
+      }
+    }
+    
+    // 检查 Firebase 是否启用
+    const firebaseStatus = localStorage.getItem('firebaseEnabled');
+    if (firebaseStatus === 'true') {
+      setFirebaseEnabled(true);
+      loadFromFirebase();
+    }
+  }, []);
+
+  // 保存历史数据到 localStorage 和 Firebase
+  React.useEffect(() => {
+    if (Object.keys(allHistory).length > 0) {
+      localStorage.setItem('calorieHistory', JSON.stringify(allHistory));
+      // 同步到 Firebase
+      if (firebaseEnabled) {
+        syncToFirebase(allHistory);
+      }
+    }
+  }, [allHistory, firebaseEnabled]);
+
+  // 获取今天的记录
+  React.useEffect(() => {
+    const today = new Date().toISOString().split('T')[0];
+    setTodayEntries(allHistory[today] || []);
+  }, [allHistory]);
 
   // 本地食物数据库（备用）
   const localFoodDatabase = [
@@ -23,16 +159,6 @@ const CalorieTrackerApp = () => {
     { id: 8, name: '牛奶', calories: 61, protein: 3.2, carbs: 4.8, fat: 3.3, fiber: 0, calcium: 113, iron: 0.03, serving: '100毫升' },
     { id: 9, name: '苹果', calories: 52, protein: 0.3, carbs: 14, fat: 0.2, fiber: 2.4, calcium: 6, iron: 0.1, serving: '100克' },
     { id: 10, name: '牛肉', calories: 250, protein: 26, carbs: 0, fat: 15, fiber: 0, calcium: 18, iron: 2.6, serving: '100克' },
-    { id: 11, name: '番茄', calories: 18, protein: 0.9, carbs: 3.9, fat: 0.2, fiber: 1.2, calcium: 10, iron: 0.3, serving: '100克' },
-    { id: 12, name: '黄瓜', calories: 15, protein: 0.7, carbs: 3.6, fat: 0.1, fiber: 0.5, calcium: 16, iron: 0.3, serving: '100克' },
-    { id: 13, name: '胡萝卜', calories: 41, protein: 0.9, carbs: 10, fat: 0.2, fiber: 2.8, calcium: 33, iron: 0.3, serving: '100克' },
-    { id: 14, name: '豆腐', calories: 76, protein: 8, carbs: 1.9, fat: 4.8, fiber: 0.3, calcium: 350, iron: 5.4, serving: '100克' },
-    { id: 15, name: '鸡腿肉', calories: 181, protein: 20, carbs: 0, fat: 10.9, fiber: 0, calcium: 11, iron: 0.9, serving: '100克' },
-    { id: 16, name: '酸奶', calories: 59, protein: 3.5, carbs: 4.7, fat: 3.3, fiber: 0, calcium: 121, iron: 0.05, serving: '100克' },
-    { id: 17, name: '全麦面包', calories: 247, protein: 13, carbs: 41, fat: 3.4, fiber: 7, calcium: 107, iron: 2.5, serving: '100克' },
-    { id: 18, name: '菠菜', calories: 23, protein: 2.9, carbs: 3.6, fat: 0.4, fiber: 2.2, calcium: 99, iron: 2.7, serving: '100克' },
-    { id: 19, name: '橙子', calories: 47, protein: 0.9, carbs: 12, fat: 0.1, fiber: 2.4, calcium: 40, iron: 0.1, serving: '100克' },
-    { id: 20, name: '红薯', calories: 86, protein: 1.6, carbs: 20, fat: 0.1, fiber: 3, calcium: 30, iron: 0.6, serving: '100克' },
   ];
 
   // 本地搜索食物
@@ -48,55 +174,79 @@ const CalorieTrackerApp = () => {
     setSearchResults(filtered);
   };
 
-  // 搜索食物（使用 API Ninjas）
+  // 搜索食物（使用 USDA FoodData Central API）
   const searchFood = async (query) => {
     if (!query.trim()) return;
     
     // 如果使用本地数据库
-    if (useLocalDatabase || !apiKey) {
+    if (useLocalDatabase) {
       searchLocalFood(query);
       return;
     }
     
     setIsSearching(true);
     try {
+      // 使用 USDA FoodData Central API
       const response = await fetch(
-        `https://api.api-ninjas.com/v1/nutrition?query=${encodeURIComponent(query)}`,
+        `https://api.nal.usda.gov/fdc/v1/foods/search?api_key=${apiKey}&query=${encodeURIComponent(query)}&pageSize=20`,
         {
+          method: 'GET',
           headers: {
-            'X-Api-Key': apiKey
+            'Content-Type': 'application/json'
           }
         }
       );
       
       if (response.ok) {
         const data = await response.json();
-        console.log('API 返回数据:', data); // 调试信息
+        console.log('USDA API 返回数据:', data);
         
-        // 转换 API 返回的数据格式
-        const formattedResults = data.map((item, index) => ({
-          id: Date.now() + index,
-          name: item.name,
-          calories: Math.round(item.calories),
-          protein: item.protein_g,
-          carbs: item.carbohydrates_total_g,
-          fat: item.fat_total_g,
-          fiber: item.fiber_g || 0,
-          calcium: (item.calcium_mg || 0),
-          iron: (item.iron_mg || 0),
-          serving: `${item.serving_size_g}克`
-        }));
-        setSearchResults(formattedResults);
+        if (!data.foods || data.foods.length === 0) {
+          setSearchResults([]);
+          return;
+        }
+        
+        // 转换 USDA API 返回的数据格式
+        const formattedResults = data.foods.map((item, index) => {
+          // 从 foodNutrients 数组中提取营养素
+          const getNutrient = (nutrientId) => {
+            const nutrient = item.foodNutrients?.find(n => n.nutrientId === nutrientId);
+            return nutrient?.value || 0;
+          };
+          
+          return {
+            id: item.fdcId || Date.now() + index,
+            name: item.description || item.lowercaseDescription || 'Unknown',
+            calories: Math.round(getNutrient(1008)), // Energy (kcal)
+            protein: parseFloat(getNutrient(1003).toFixed(1)), // Protein
+            carbs: parseFloat(getNutrient(1005).toFixed(1)), // Carbohydrates
+            fat: parseFloat(getNutrient(1004).toFixed(1)), // Total lipid (fat)
+            fiber: parseFloat(getNutrient(1079).toFixed(1)), // Fiber
+            calcium: Math.round(getNutrient(1087)), // Calcium
+            iron: parseFloat(getNutrient(1089).toFixed(1)), // Iron
+            serving: '100克'
+          };
+        });
+        
+        // 过滤掉没有卡路里数据的食物
+        const validResults = formattedResults.filter(item => item.calories > 0);
+        
+        if (validResults.length === 0) {
+          alert('未找到有效的营养数据，已切换到本地数据库。');
+          setUseLocalDatabase(true);
+          searchLocalFood(query);
+        } else {
+          setSearchResults(validResults);
+        }
       } else {
-        const errorText = await response.text();
-        console.error('API 请求失败:', response.status, errorText);
-        alert(`API 请求失败，已切换到本地数据库。错误: ${response.status === 401 ? 'API Key 无效' : errorText}`);
+        console.error('USDA API 请求失败:', response.status);
+        alert('API 请求失败，已切换到本地数据库。');
         setUseLocalDatabase(true);
         searchLocalFood(query);
       }
     } catch (error) {
       console.error('搜索食物时出错:', error);
-      alert('API 调用失败，已切换到本地数据库。');
+      alert('网络错误，已切换到本地数据库。错误: ' + error.message);
       setUseLocalDatabase(true);
       searchLocalFood(query);
     } finally {
@@ -116,16 +266,119 @@ const CalorieTrackerApp = () => {
     }, 500);
 
     return () => clearTimeout(timeoutId);
-  }, [searchQuery, apiKey]);
+  }, [searchQuery, apiKey, useLocalDatabase]);
 
   const addFood = (food) => {
-    setTodayEntries([...todayEntries, { ...food, timestamp: new Date(), portion: 1 }]);
+    // 打开克数输入界面
+    setSelectedFood(food);
+    setCustomGrams('100');
+    // 重置为当前日期和时间
+    setCustomDate(new Date().toISOString().split('T')[0]);
+    setCustomTime(new Date().toTimeString().slice(0, 5));
+    setMealTime('breakfast');
+  };
+
+  const confirmAddFood = () => {
+    if (!selectedFood) return;
+    
+    // 如果是编辑模式，调用更新函数
+    if (isEditing) {
+      updateEntry();
+      return;
+    }
+    
+    const grams = parseFloat(customGrams) || 100;
+    const portion = grams / 100;
+    
+    // 使用用户选择的日期和时间
+    const selectedDateTime = new Date(`${customDate}T${customTime}:00`);
+    
+    const entryWithPortion = {
+      ...selectedFood,
+      timestamp: selectedDateTime.toISOString(),
+      portion: portion,
+      displayGrams: grams,
+      mealTime: mealTime,
+      date: customDate, // 使用自定义日期
+    };
+    
+    // 更新历史记录
+    const updatedHistory = { ...allHistory };
+    if (!updatedHistory[customDate]) {
+      updatedHistory[customDate] = [];
+    }
+    updatedHistory[customDate] = [...updatedHistory[customDate], entryWithPortion];
+    setAllHistory(updatedHistory);
+    
+    setSelectedFood(null);
     setShowSearch(false);
     setSearchQuery('');
+    setSearchResults([]);
   };
 
   const removeEntry = (index) => {
-    setTodayEntries(todayEntries.filter((_, i) => i !== index));
+    const today = new Date().toISOString().split('T')[0];
+    const updatedHistory = { ...allHistory };
+    updatedHistory[today] = todayEntries.filter((_, i) => i !== index);
+    setAllHistory(updatedHistory);
+  };
+
+  // 开始编辑条目
+  const startEditEntry = (date, index) => {
+    const entry = allHistory[date][index];
+    setEditingEntry({ date, index, entry });
+    setIsEditing(true);
+    
+    // 填充编辑表单
+    setSelectedFood(entry);
+    setCustomGrams(entry.displayGrams.toString());
+    setMealTime(entry.mealTime);
+    setCustomDate(entry.date);
+    const time = new Date(entry.timestamp).toTimeString().slice(0, 5);
+    setCustomTime(time);
+  };
+
+  // 更新编辑后的条目
+  const updateEntry = () => {
+    if (!editingEntry) return;
+    
+    const { date, index } = editingEntry;
+    const grams = parseFloat(customGrams) || 100;
+    const portion = grams / 100;
+    const selectedDateTime = new Date(`${customDate}T${customTime}:00`);
+    
+    const updatedEntry = {
+      ...selectedFood,
+      timestamp: selectedDateTime.toISOString(),
+      portion: portion,
+      displayGrams: grams,
+      mealTime: mealTime,
+      date: customDate,
+    };
+    
+    const updatedHistory = { ...allHistory };
+    
+    // 如果日期改变了，需要从原日期删除，添加到新日期
+    if (date !== customDate) {
+      // 从原日期删除
+      updatedHistory[date] = updatedHistory[date].filter((_, i) => i !== index);
+      if (updatedHistory[date].length === 0) {
+        delete updatedHistory[date];
+      }
+      // 添加到新日期
+      if (!updatedHistory[customDate]) {
+        updatedHistory[customDate] = [];
+      }
+      updatedHistory[customDate] = [...updatedHistory[customDate], updatedEntry];
+    } else {
+      // 同一天，直接更新
+      updatedHistory[date][index] = updatedEntry;
+    }
+    
+    setAllHistory(updatedHistory);
+    setEditingEntry(null);
+    setIsEditing(false);
+    setSelectedFood(null);
   };
 
   const totalNutrition = todayEntries.reduce(
@@ -144,22 +397,6 @@ const CalorieTrackerApp = () => {
   const dailyGoal = 2000;
   const calorieProgress = Math.min((totalNutrition.calories / dailyGoal) * 100, 100);
 
-  const saveApiKey = () => {
-    if (apiKey.trim()) {
-      localStorage.setItem('nutritionApiKey', apiKey);
-      setShowApiKeyInput(false);
-    }
-  };
-
-  // 页面加载时检查是否有保存的 API Key
-  React.useEffect(() => {
-    const savedKey = localStorage.getItem('nutritionApiKey');
-    if (savedKey) {
-      setApiKey(savedKey);
-      setShowApiKeyInput(false);
-    }
-  }, []);
-
   return (
     <div style={{
       minHeight: '100vh',
@@ -168,134 +405,6 @@ const CalorieTrackerApp = () => {
       padding: '0',
       position: 'relative',
     }}>
-      {/* API Key 设置弹窗 */}
-      {showApiKeyInput && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'rgba(0, 0, 0, 0.5)',
-            backdropFilter: 'blur(10px)',
-            zIndex: 2000,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '20px',
-          }}
-          onClick={() => setShowApiKeyInput(false)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: 'white',
-              borderRadius: '20px',
-              padding: '32px',
-              maxWidth: '500px',
-              width: '100%',
-              boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <h2 style={{
-                fontSize: '24px',
-                fontWeight: '700',
-                margin: 0,
-                color: '#1d1d1f',
-              }}>数据源设置</h2>
-              <button
-                onClick={() => setShowApiKeyInput(false)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  fontSize: '28px',
-                  color: '#86868b',
-                  cursor: 'pointer',
-                  padding: 0,
-                  lineHeight: '1',
-                }}
-              >
-                ×
-              </button>
-            </div>
-            
-            <div style={{
-              background: '#f5f5f7',
-              borderRadius: '12px',
-              padding: '16px',
-              marginBottom: '20px',
-            }}>
-              <label style={{
-                display: 'flex',
-                alignItems: 'center',
-                cursor: 'pointer',
-                fontSize: '15px',
-                color: '#1d1d1f',
-                fontWeight: '500',
-              }}>
-                <input
-                  type="checkbox"
-                  checked={useLocalDatabase}
-                  onChange={(e) => setUseLocalDatabase(e.target.checked)}
-                  style={{ marginRight: '12px', width: '20px', height: '20px' }}
-                />
-                使用本地数据库（20种常见食物）
-              </label>
-            </div>
-
-            {!useLocalDatabase && (
-              <>
-                <p style={{
-                  fontSize: '15px',
-                  color: '#86868b',
-                  marginBottom: '16px',
-                  lineHeight: '1.5',
-                }}>
-                  使用 API Ninjas 搜索全球食物数据库。<br />
-                  访问 <a href="https://api-ninjas.com/register" target="_blank" rel="noopener noreferrer" style={{ color: '#007aff' }}>api-ninjas.com/register</a> 免费注册并获取 API Key。
-                </p>
-                <input
-                  type="text"
-                  placeholder="粘贴你的 API Key"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '14px 16px',
-                    fontSize: '17px',
-                    border: '1px solid #d2d2d7',
-                    borderRadius: '10px',
-                    marginBottom: '16px',
-                    outline: 'none',
-                    fontFamily: 'monospace',
-                  }}
-                  onFocus={(e) => e.target.style.borderColor = '#007aff'}
-                  onBlur={(e) => e.target.style.borderColor = '#d2d2d7'}
-                />
-              </>
-            )}
-            
-            <button
-              onClick={saveApiKey}
-              style={{
-                width: '100%',
-                background: '#007aff',
-                color: 'white',
-                border: 'none',
-                borderRadius: '12px',
-                padding: '14px',
-                fontSize: '17px',
-                fontWeight: '600',
-                cursor: 'pointer',
-              }}
-            >
-              保存设置
-            </button>
-          </div>
-        </div>
-      )}
       {/* 顶部状态栏 */}
       <div style={{
         background: 'rgba(255, 255, 255, 0.8)',
@@ -322,9 +431,71 @@ const CalorieTrackerApp = () => {
             }}>营养记录</h1>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <button
-                onClick={() => setShowApiKeyInput(true)}
+                onClick={() => {
+                  const newStatus = !firebaseEnabled;
+                  setFirebaseEnabled(newStatus);
+                  localStorage.setItem('firebaseEnabled', newStatus.toString());
+                  if (newStatus) {
+                    syncToFirebase(allHistory);
+                  }
+                }}
                 style={{
-                  background: useLocalDatabase ? '#f5f5f7' : '#007aff',
+                  background: firebaseEnabled ? '#34c759' : '#f5f5f7',
+                  color: firebaseEnabled ? 'white' : '#86868b',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '6px 12px',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                }}
+              >
+                {isSyncing ? (
+                  <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} />
+                ) : firebaseEnabled ? (
+                  <Cloud size={12} />
+                ) : (
+                  <CloudOff size={12} />
+                )}
+                {firebaseEnabled ? '云同步' : '本地'}
+              </button>
+              <button
+                onClick={() => setShowCharts(true)}
+                style={{
+                  background: '#f5f5f7',
+                  color: '#1d1d1f',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '6px 12px',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                }}
+              >
+                📈 图表
+              </button>
+              <button
+                onClick={() => setShowHistory(true)}
+                style={{
+                  background: '#f5f5f7',
+                  color: '#1d1d1f',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '6px 12px',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                }}
+              >
+                📊 历史
+              </button>
+              <button
+                onClick={() => setUseLocalDatabase(!useLocalDatabase)}
+                style={{
+                  background: useLocalDatabase ? '#f5f5f7' : '#34c759',
                   color: useLocalDatabase ? '#86868b' : 'white',
                   border: 'none',
                   borderRadius: '8px',
@@ -334,7 +505,7 @@ const CalorieTrackerApp = () => {
                   cursor: 'pointer',
                 }}
               >
-                {useLocalDatabase ? '本地数据' : 'API'}
+                {useLocalDatabase ? '本地' : 'USDA API'}
               </button>
               <div style={{
                 fontSize: '15px',
@@ -590,34 +761,70 @@ const CalorieTrackerApp = () => {
                 >
                   <div style={{ flex: 1 }}>
                     <div style={{
-                      fontSize: '17px',
-                      fontWeight: '500',
-                      color: '#1d1d1f',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
                       marginBottom: '4px',
                     }}>
-                      {entry.name}
+                      <span style={{
+                        fontSize: '17px',
+                        fontWeight: '500',
+                        color: '#1d1d1f',
+                      }}>
+                        {entry.name}
+                      </span>
+                      <span style={{
+                        fontSize: '12px',
+                        background: entry.mealTime === 'breakfast' ? '#ff9500' : 
+                                   entry.mealTime === 'lunch' ? '#34c759' : 
+                                   entry.mealTime === 'dinner' ? '#007aff' : '#ff3b30',
+                        color: 'white',
+                        padding: '2px 8px',
+                        borderRadius: '4px',
+                        fontWeight: '600',
+                      }}>
+                        {entry.mealTime === 'breakfast' ? '早餐' : 
+                         entry.mealTime === 'lunch' ? '午餐' : 
+                         entry.mealTime === 'dinner' ? '晚餐' : '加餐'}
+                      </span>
                     </div>
                     <div style={{
                       fontSize: '13px',
                       color: '#86868b',
                     }}>
-                      {entry.serving} · {Math.round(entry.calories * entry.portion)} 千卡
+                      {entry.displayGrams || Math.round(entry.portion * 100)}克 · {Math.round(entry.calories * entry.portion)} 千卡 · {new Date(entry.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
                     </div>
                   </div>
-                  <button
-                    onClick={() => removeEntry(index)}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: '#ff3b30',
-                      fontSize: '15px',
-                      padding: '8px',
-                      cursor: 'pointer',
-                      fontWeight: '500',
-                    }}
-                  >
-                    删除
-                  </button>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      onClick={() => startEditEntry(entry.date, index)}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: '#007aff',
+                        fontSize: '15px',
+                        padding: '8px',
+                        cursor: 'pointer',
+                        fontWeight: '500',
+                      }}
+                    >
+                      编辑
+                    </button>
+                    <button
+                      onClick={() => removeEntry(index)}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: '#ff3b30',
+                        fontSize: '15px',
+                        padding: '8px',
+                        cursor: 'pointer',
+                        fontWeight: '500',
+                      }}
+                    >
+                      删除
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -708,7 +915,9 @@ const CalorieTrackerApp = () => {
                   fontWeight: '600',
                   margin: 0,
                   color: '#1d1d1f',
-                }}>搜索食物</h3>
+                }}>
+                  搜索食物 {!useLocalDatabase && <span style={{ fontSize: '14px', color: '#34c759', fontWeight: '500' }}>(USDA API 🌍)</span>}
+                </h3>
                 <button
                   onClick={() => {
                     setShowSearch(false);
@@ -745,7 +954,7 @@ const CalorieTrackerApp = () => {
                 />
                 <input
                   type="text"
-                  placeholder="搜索食物名称（中文或英文）"
+                  placeholder={useLocalDatabase ? "搜索本地食物" : "搜索食物（试试 chicken 或 rice）"}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   autoFocus
@@ -796,7 +1005,7 @@ const CalorieTrackerApp = () => {
                 }}>
                   <Search size={48} strokeWidth={1.5} style={{ margin: '0 auto 12px', opacity: 0.3 }} />
                   <div style={{ fontSize: '15px' }}>未找到相关食物</div>
-                  <div style={{ fontSize: '13px', marginTop: '8px' }}>试试用英文搜索，如 "chicken" 或 "rice"</div>
+                  {!useLocalDatabase && <div style={{ fontSize: '13px', marginTop: '8px' }}>试试用英文搜索，如 "chicken" 或 "rice"</div>}
                 </div>
               ) : searchResults.length === 0 ? (
                 <div style={{
@@ -806,7 +1015,7 @@ const CalorieTrackerApp = () => {
                 }}>
                   <Apple size={48} strokeWidth={1.5} style={{ margin: '0 auto 12px', opacity: 0.3 }} />
                   <div style={{ fontSize: '15px' }}>输入食物名称开始搜索</div>
-                  <div style={{ fontSize: '13px', marginTop: '8px' }}>支持中文和英文</div>
+                  {!useLocalDatabase && <div style={{ fontSize: '13px', marginTop: '8px', color: '#34c759' }}>✨ 当前使用 USDA 全球食物数据库</div>}
                 </div>
               ) : (
                 searchResults.map((food) => (
@@ -849,15 +1058,981 @@ const CalorieTrackerApp = () => {
                           fontSize: '12px',
                           color: '#86868b',
                         }}>
-                          <span>蛋白 {food.protein.toFixed(1)}g</span>
-                          <span>碳水 {food.carbs.toFixed(1)}g</span>
-                          <span>脂肪 {food.fat.toFixed(1)}g</span>
+                          <span>蛋白 {food.protein}g</span>
+                          <span>碳水 {food.carbs}g</span>
+                          <span>脂肪 {food.fat}g</span>
                         </div>
                       </div>
                       <Plus size={20} color="#007aff" strokeWidth={2.5} />
                     </div>
                   </div>
                 ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 克数输入弹窗 */}
+      {selectedFood && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0, 0, 0, 0.5)',
+            backdropFilter: 'blur(10px)',
+            zIndex: 2000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+            animation: 'fadeIn 0.2s ease',
+          }}
+          onClick={() => setSelectedFood(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'white',
+              borderRadius: '20px',
+              padding: '32px',
+              maxWidth: '400px',
+              width: '100%',
+              boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
+              animation: 'scaleIn 0.3s ease',
+            }}
+          >
+            <h3 style={{
+              fontSize: '24px',
+              fontWeight: '700',
+              marginBottom: '8px',
+              color: '#1d1d1f',
+            }}>
+              {isEditing ? '编辑记录' : selectedFood.name}
+            </h3>
+            
+            <div style={{
+              fontSize: '15px',
+              color: '#86868b',
+              marginBottom: '20px',
+            }}>
+              选择日期、时间和用餐类型
+            </div>
+
+            {/* 日期和时间选择 */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: '12px',
+              marginBottom: '20px',
+            }}>
+              <div>
+                <label style={{
+                  fontSize: '13px',
+                  color: '#86868b',
+                  marginBottom: '8px',
+                  display: 'block',
+                  fontWeight: '500',
+                }}>日期</label>
+                <input
+                  type="date"
+                  value={customDate}
+                  onChange={(e) => setCustomDate(e.target.value)}
+                  max={new Date().toISOString().split('T')[0]} // 不能选择未来日期
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    fontSize: '15px',
+                    border: '1px solid #d2d2d7',
+                    borderRadius: '10px',
+                    outline: 'none',
+                    background: 'white',
+                    fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif',
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{
+                  fontSize: '13px',
+                  color: '#86868b',
+                  marginBottom: '8px',
+                  display: 'block',
+                  fontWeight: '500',
+                }}>时间</label>
+                <input
+                  type="time"
+                  value={customTime}
+                  onChange={(e) => setCustomTime(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    fontSize: '15px',
+                    border: '1px solid #d2d2d7',
+                    borderRadius: '10px',
+                    outline: 'none',
+                    background: 'white',
+                    fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif',
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* 用餐时间选择 */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(4, 1fr)',
+              gap: '8px',
+              marginBottom: '20px',
+            }}>
+              {[
+                { value: 'breakfast', label: '早餐', emoji: '🌅' },
+                { value: 'lunch', label: '午餐', emoji: '☀️' },
+                { value: 'dinner', label: '晚餐', emoji: '🌙' },
+                { value: 'snack', label: '加餐', emoji: '🍎' },
+              ].map(time => (
+                <button
+                  key={time.value}
+                  onClick={() => setMealTime(time.value)}
+                  style={{
+                    background: mealTime === time.value ? '#007aff' : '#f5f5f7',
+                    color: mealTime === time.value ? 'white' : '#1d1d1f',
+                    border: 'none',
+                    borderRadius: '10px',
+                    padding: '12px 8px',
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}
+                >
+                  <span style={{ fontSize: '20px' }}>{time.emoji}</span>
+                  <span>{time.label}</span>
+                </button>
+              ))}
+            </div>
+
+            <div style={{
+              fontSize: '15px',
+              color: '#86868b',
+              marginBottom: '12px',
+            }}>
+              输入克数
+            </div>
+
+            <div style={{
+              background: '#f5f5f7',
+              borderRadius: '12px',
+              padding: '20px',
+              marginBottom: '24px',
+            }}>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+              }}>
+                <input
+                  type="number"
+                  value={customGrams}
+                  onChange={(e) => setCustomGrams(e.target.value)}
+                  autoFocus
+                  style={{
+                    flex: 1,
+                    fontSize: '32px',
+                    fontWeight: '600',
+                    border: 'none',
+                    background: 'none',
+                    outline: 'none',
+                    color: '#1d1d1f',
+                    textAlign: 'center',
+                  }}
+                />
+                <span style={{
+                  fontSize: '20px',
+                  color: '#86868b',
+                  fontWeight: '500',
+                }}>克</span>
+              </div>
+            </div>
+
+            {/* 营养预览 */}
+            <div style={{
+              background: '#f5f5f7',
+              borderRadius: '12px',
+              padding: '16px',
+              marginBottom: '20px',
+            }}>
+              <div style={{
+                fontSize: '13px',
+                color: '#86868b',
+                marginBottom: '12px',
+                fontWeight: '600',
+              }}>营养预览：</div>
+              
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, 1fr)',
+                gap: '12px',
+              }}>
+                <div>
+                  <div style={{ fontSize: '12px', color: '#86868b', marginBottom: '4px' }}>卡路里</div>
+                  <div style={{ fontSize: '20px', fontWeight: '600', color: '#ff3b30' }}>
+                    {Math.round(selectedFood.calories * (parseFloat(customGrams) || 100) / 100)}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '12px', color: '#86868b', marginBottom: '4px' }}>蛋白质</div>
+                  <div style={{ fontSize: '20px', fontWeight: '600', color: '#007aff' }}>
+                    {(selectedFood.protein * (parseFloat(customGrams) || 100) / 100).toFixed(1)}g
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '12px', color: '#86868b', marginBottom: '4px' }}>碳水</div>
+                  <div style={{ fontSize: '20px', fontWeight: '600', color: '#ff9500' }}>
+                    {(selectedFood.carbs * (parseFloat(customGrams) || 100) / 100).toFixed(1)}g
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '12px', color: '#86868b', marginBottom: '4px' }}>脂肪</div>
+                  <div style={{ fontSize: '20px', fontWeight: '600', color: '#34c759' }}>
+                    {(selectedFood.fat * (parseFloat(customGrams) || 100) / 100).toFixed(1)}g
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 快捷克数按钮 */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(4, 1fr)',
+              gap: '8px',
+              marginBottom: '20px',
+            }}>
+              {[50, 100, 150, 200].map(g => (
+                <button
+                  key={g}
+                  onClick={() => setCustomGrams(g.toString())}
+                  style={{
+                    background: customGrams === g.toString() ? '#007aff' : '#f5f5f7',
+                    color: customGrams === g.toString() ? 'white' : '#1d1d1f',
+                    border: 'none',
+                    borderRadius: '8px',
+                    padding: '10px',
+                    fontSize: '15px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {g}g
+                </button>
+              ))}
+            </div>
+
+            <div style={{
+              display: 'flex',
+              gap: '12px',
+            }}>
+              <button
+                onClick={() => {
+                  setSelectedFood(null);
+                  setEditingEntry(null);
+                  setIsEditing(false);
+                }}
+                style={{
+                  flex: 1,
+                  background: '#f5f5f7',
+                  color: '#1d1d1f',
+                  border: 'none',
+                  borderRadius: '12px',
+                  padding: '14px',
+                  fontSize: '17px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                }}
+              >
+                取消
+              </button>
+              <button
+                onClick={confirmAddFood}
+                style={{
+                  flex: 2,
+                  background: '#007aff',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '12px',
+                  padding: '14px',
+                  fontSize: '17px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                }}
+              >
+                {isEditing ? '保存修改' : '添加到今日'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 历史记录弹窗 */}
+      {showHistory && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0, 0, 0, 0.4)',
+            backdropFilter: 'blur(10px)',
+            zIndex: 1000,
+            display: 'flex',
+            alignItems: 'flex-end',
+            animation: 'fadeIn 0.2s ease',
+          }}
+          onClick={() => setShowHistory(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'white',
+              borderRadius: '20px 20px 0 0',
+              width: '100%',
+              maxHeight: '85vh',
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+              animation: 'slideUp 0.3s ease',
+            }}
+          >
+            <div style={{
+              padding: '20px',
+              borderBottom: '0.5px solid #f5f5f7',
+              position: 'sticky',
+              top: 0,
+              background: 'white',
+              zIndex: 10,
+            }}>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: '16px',
+              }}>
+                <h3 style={{
+                  fontSize: '20px',
+                  fontWeight: '600',
+                  margin: 0,
+                  color: '#1d1d1f',
+                }}>历史记录</h3>
+                <button
+                  onClick={() => setShowHistory(false)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    fontSize: '17px',
+                    color: '#007aff',
+                    cursor: 'pointer',
+                    fontWeight: '500',
+                  }}
+                >
+                  完成
+                </button>
+              </div>
+            </div>
+
+            <div style={{
+              flex: 1,
+              overflowY: 'auto',
+              padding: '16px',
+            }}>
+              {Object.keys(allHistory).length === 0 ? (
+                <div style={{
+                  padding: '48px 20px',
+                  textAlign: 'center',
+                  color: '#86868b',
+                }}>
+                  <div style={{ fontSize: '48px', marginBottom: '12px' }}>📊</div>
+                  <div style={{ fontSize: '15px' }}>暂无历史记录</div>
+                </div>
+              ) : (
+                Object.keys(allHistory)
+                  .sort((a, b) => b.localeCompare(a)) // 最新日期在前
+                  .map(date => {
+                    const entries = allHistory[date];
+                    if (!entries || entries.length === 0) return null;
+                    
+                    const dayTotal = entries.reduce((acc, entry) => ({
+                      calories: acc.calories + entry.calories * entry.portion,
+                      protein: acc.protein + entry.protein * entry.portion,
+                      carbs: acc.carbs + entry.carbs * entry.portion,
+                      fat: acc.fat + entry.fat * entry.portion,
+                    }), { calories: 0, protein: 0, carbs: 0, fat: 0 });
+
+                    const dateObj = new Date(date);
+                    const isToday = date === new Date().toISOString().split('T')[0];
+                    
+                    return (
+                      <div
+                        key={date}
+                        style={{
+                          background: 'white',
+                          borderRadius: '16px',
+                          padding: '16px',
+                          marginBottom: '12px',
+                          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.04)',
+                          border: isToday ? '2px solid #007aff' : '1px solid #f5f5f7',
+                        }}
+                      >
+                        <div style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          marginBottom: '12px',
+                        }}>
+                          <div>
+                            <div style={{
+                              fontSize: '17px',
+                              fontWeight: '600',
+                              color: '#1d1d1f',
+                              marginBottom: '4px',
+                            }}>
+                              {dateObj.toLocaleDateString('zh-CN', { 
+                                month: 'long', 
+                                day: 'numeric',
+                                weekday: 'short'
+                              })}
+                              {isToday && <span style={{ 
+                                fontSize: '12px', 
+                                color: '#007aff',
+                                marginLeft: '8px',
+                                background: '#e5f2ff',
+                                padding: '2px 8px',
+                                borderRadius: '4px',
+                              }}>今天</span>}
+                            </div>
+                            <div style={{
+                              fontSize: '13px',
+                              color: '#86868b',
+                            }}>
+                              {entries.length} 条记录
+                            </div>
+                          </div>
+                          <div style={{
+                            textAlign: 'right',
+                          }}>
+                            <div style={{
+                              fontSize: '24px',
+                              fontWeight: '700',
+                              color: '#ff3b30',
+                            }}>
+                              {Math.round(dayTotal.calories)}
+                            </div>
+                            <div style={{
+                              fontSize: '11px',
+                              color: '#86868b',
+                            }}>
+                              千卡
+                            </div>
+                          </div>
+                        </div>
+
+                        <div style={{
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(3, 1fr)',
+                          gap: '8px',
+                          marginBottom: '12px',
+                        }}>
+                          <div style={{
+                            background: '#f5f5f7',
+                            borderRadius: '8px',
+                            padding: '8px',
+                            textAlign: 'center',
+                          }}>
+                            <div style={{ fontSize: '10px', color: '#86868b', marginBottom: '2px' }}>蛋白质</div>
+                            <div style={{ fontSize: '16px', fontWeight: '600', color: '#007aff' }}>{Math.round(dayTotal.protein)}g</div>
+                          </div>
+                          <div style={{
+                            background: '#f5f5f7',
+                            borderRadius: '8px',
+                            padding: '8px',
+                            textAlign: 'center',
+                          }}>
+                            <div style={{ fontSize: '10px', color: '#86868b', marginBottom: '2px' }}>碳水</div>
+                            <div style={{ fontSize: '16px', fontWeight: '600', color: '#ff9500' }}>{Math.round(dayTotal.carbs)}g</div>
+                          </div>
+                          <div style={{
+                            background: '#f5f5f7',
+                            borderRadius: '8px',
+                            padding: '8px',
+                            textAlign: 'center',
+                          }}>
+                            <div style={{ fontSize: '10px', color: '#86868b', marginBottom: '2px' }}>脂肪</div>
+                            <div style={{ fontSize: '16px', fontWeight: '600', color: '#34c759' }}>{Math.round(dayTotal.fat)}g</div>
+                          </div>
+                        </div>
+
+                        <div style={{
+                          fontSize: '12px',
+                          color: '#86868b',
+                          borderTop: '1px solid #f5f5f7',
+                          paddingTop: '12px',
+                        }}>
+                          {entries.map((entry, idx) => (
+                            <div key={idx} style={{ 
+                              marginBottom: idx < entries.length - 1 ? '8px' : 0,
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                            }}>
+                              <div style={{ flex: 1 }}>
+                                <span style={{ fontWeight: '500', color: '#1d1d1f' }}>{entry.name}</span>
+                                <span style={{ marginLeft: '6px' }}>
+                                  {entry.displayGrams}g
+                                </span>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{
+                                  fontSize: '11px',
+                                  background: entry.mealTime === 'breakfast' ? '#ff9500' : 
+                                             entry.mealTime === 'lunch' ? '#34c759' : 
+                                             entry.mealTime === 'dinner' ? '#007aff' : '#ff3b30',
+                                  color: 'white',
+                                  padding: '2px 6px',
+                                  borderRadius: '3px',
+                                }}>
+                                  {entry.mealTime === 'breakfast' ? '早' : 
+                                   entry.mealTime === 'lunch' ? '午' : 
+                                   entry.mealTime === 'dinner' ? '晚' : '加'}
+                                </span>
+                                <span style={{ fontWeight: '600', color: '#1d1d1f' }}>
+                                  {Math.round(entry.calories * entry.portion)}
+                                </span>
+                                <span> 千卡</span>
+                                <button
+                                  onClick={() => {
+                                    setShowHistory(false);
+                                    startEditEntry(date, idx);
+                                  }}
+                                  style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    color: '#007aff',
+                                    fontSize: '11px',
+                                    padding: '4px 6px',
+                                    cursor: 'pointer',
+                                    fontWeight: '500',
+                                  }}
+                                >
+                                  编辑
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 图表弹窗 */}
+      {showCharts && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0, 0, 0, 0.4)',
+            backdropFilter: 'blur(10px)',
+            zIndex: 1000,
+            display: 'flex',
+            alignItems: 'flex-end',
+            animation: 'fadeIn 0.2s ease',
+          }}
+          onClick={() => setShowCharts(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'white',
+              borderRadius: '20px 20px 0 0',
+              width: '100%',
+              maxHeight: '85vh',
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+              animation: 'slideUp 0.3s ease',
+            }}
+          >
+            <div style={{
+              padding: '20px',
+              borderBottom: '0.5px solid #f5f5f7',
+              position: 'sticky',
+              top: 0,
+              background: 'white',
+              zIndex: 10,
+            }}>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: '16px',
+              }}>
+                <h3 style={{
+                  fontSize: '20px',
+                  fontWeight: '600',
+                  margin: 0,
+                  color: '#1d1d1f',
+                }}>营养趋势</h3>
+                <button
+                  onClick={() => setShowCharts(false)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    fontSize: '17px',
+                    color: '#007aff',
+                    cursor: 'pointer',
+                    fontWeight: '500',
+                  }}
+                >
+                  完成
+                </button>
+              </div>
+
+              {/* 图表类型切换 */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(4, 1fr)',
+                gap: '8px',
+              }}>
+                {[
+                  { value: 'calories', label: '卡路里', color: '#ff3b30' },
+                  { value: 'protein', label: '蛋白质', color: '#007aff' },
+                  { value: 'carbs', label: '碳水', color: '#ff9500' },
+                  { value: 'fat', label: '脂肪', color: '#34c759' },
+                ].map(type => (
+                  <button
+                    key={type.value}
+                    onClick={() => setChartType(type.value)}
+                    style={{
+                      background: chartType === type.value ? type.color : '#f5f5f7',
+                      color: chartType === type.value ? 'white' : '#1d1d1f',
+                      border: 'none',
+                      borderRadius: '10px',
+                      padding: '12px 8px',
+                      fontSize: '13px',
+                      fontWeight: '600',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {type.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{
+              flex: 1,
+              overflowY: 'auto',
+              padding: '20px',
+            }}>
+              {Object.keys(allHistory).length === 0 ? (
+                <div style={{
+                  padding: '48px 20px',
+                  textAlign: 'center',
+                  color: '#86868b',
+                }}>
+                  <TrendingUp size={48} strokeWidth={1.5} style={{ margin: '0 auto 12px', opacity: 0.3 }} />
+                  <div style={{ fontSize: '15px' }}>暂无数据</div>
+                </div>
+              ) : (
+                (() => {
+                  // 计算最近7天的数据
+                  const last7Days = [];
+                  const today = new Date();
+                  
+                  for (let i = 6; i >= 0; i--) {
+                    const date = new Date(today);
+                    date.setDate(date.getDate() - i);
+                    const dateStr = date.toISOString().split('T')[0];
+                    
+                    const entries = allHistory[dateStr] || [];
+                    const total = entries.reduce((acc, entry) => ({
+                      calories: acc.calories + entry.calories * entry.portion,
+                      protein: acc.protein + entry.protein * entry.portion,
+                      carbs: acc.carbs + entry.carbs * entry.portion,
+                      fat: acc.fat + entry.fat * entry.portion,
+                    }), { calories: 0, protein: 0, carbs: 0, fat: 0 });
+                    
+                    last7Days.push({
+                      date: dateStr,
+                      label: date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }),
+                      weekday: date.toLocaleDateString('zh-CN', { weekday: 'short' }),
+                      ...total
+                    });
+                  }
+
+                  // 找到最大值用于缩放
+                  const maxValue = Math.max(...last7Days.map(d => d[chartType]));
+                  const chartColor = chartType === 'calories' ? '#ff3b30' : 
+                                    chartType === 'protein' ? '#007aff' : 
+                                    chartType === 'carbs' ? '#ff9500' : '#34c759';
+                  const unit = chartType === 'calories' ? '千卡' : 'g';
+                  const label = chartType === 'calories' ? '卡路里' : 
+                               chartType === 'protein' ? '蛋白质' : 
+                               chartType === 'carbs' ? '碳水化合物' : '脂肪';
+
+                  return (
+                    <div>
+                      {/* 图表标题 */}
+                      <div style={{
+                        fontSize: '17px',
+                        fontWeight: '600',
+                        color: '#1d1d1f',
+                        marginBottom: '8px',
+                      }}>
+                        过去7天{label}摄入
+                      </div>
+                      <div style={{
+                        fontSize: '13px',
+                        color: '#86868b',
+                        marginBottom: '24px',
+                      }}>
+                        平均每日: {Math.round(last7Days.reduce((sum, d) => sum + d[chartType], 0) / 7)} {unit}
+                      </div>
+
+                      {/* 折线图 */}
+                      <div style={{
+                        background: '#f5f5f7',
+                        borderRadius: '16px',
+                        padding: '20px',
+                        marginBottom: '24px',
+                      }}>
+                        <div style={{
+                          position: 'relative',
+                          height: '200px',
+                        }}>
+                          {/* Y轴刻度线 */}
+                          {[0, 0.25, 0.5, 0.75, 1].map((ratio, i) => (
+                            <div
+                              key={i}
+                              style={{
+                                position: 'absolute',
+                                left: 0,
+                                right: 0,
+                                bottom: `${ratio * 180}px`,
+                                borderTop: '1px dashed #e5e5e7',
+                                opacity: 0.5,
+                              }}
+                            >
+                              <span style={{
+                                position: 'absolute',
+                                left: '-8px',
+                                top: '-8px',
+                                fontSize: '10px',
+                                color: '#86868b',
+                                transform: 'translateX(-100%)',
+                              }}>
+                                {Math.round(maxValue * ratio)}
+                              </span>
+                            </div>
+                          ))}
+
+                          {/* 折线图容器 */}
+                          <svg
+                            width="100%"
+                            height="180"
+                            viewBox="0 0 100 100"
+                            preserveAspectRatio="none"
+                            style={{
+                              position: 'absolute',
+                              bottom: '20px',
+                              left: 0,
+                            }}
+                          >
+                            {/* 折线 */}
+                            <polyline
+                              points={last7Days.map((day, i) => {
+                                const x = (i / (last7Days.length - 1)) * 100;
+                                // Y轴留10%空间，使用90%的高度
+                                const y = maxValue > 0 ? (10 + (1 - day[chartType] / maxValue) * 80) : 90;
+                                return `${x},${y}`;
+                              }).join(' ')}
+                              fill="none"
+                              stroke={chartColor}
+                              strokeWidth="0.8"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+
+                            {/* 实心数据点 */}
+                            {last7Days.map((day, i) => {
+                              const x = (i / (last7Days.length - 1)) * 100;
+                              const y = maxValue > 0 ? (10 + (1 - day[chartType] / maxValue) * 80) : 90;
+                              
+                              return (
+                                <circle
+                                  key={i}
+                                  cx={x}
+                                  cy={y}
+                                  r="1.2"
+                                  fill={chartColor}
+                                />
+                              );
+                            })}
+                          </svg>
+
+                          {/* X轴标签（日期） */}
+                          <div style={{
+                            position: 'absolute',
+                            bottom: 0,
+                            left: 0,
+                            right: 0,
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                          }}>
+                            {last7Days.map((day, i) => {
+                              const isToday = day.date === new Date().toISOString().split('T')[0];
+                              return (
+                                <div
+                                  key={i}
+                                  style={{
+                                    flex: 1,
+                                    textAlign: 'center',
+                                    fontSize: '11px',
+                                    color: isToday ? '#1d1d1f' : '#86868b',
+                                    fontWeight: isToday ? '600' : '500',
+                                  }}
+                                >
+                                  <div>{day.weekday}</div>
+                                  <div style={{ fontSize: '10px' }}>{day.label.split('/')[1]}</div>
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          {/* 数值标签 */}
+                          {last7Days.map((day, i) => {
+                            if (day[chartType] === 0) return null;
+                            const x = (i / (last7Days.length - 1)) * 100;
+                            const y = maxValue > 0 ? ((1 - day[chartType] / maxValue) * 180) : 180;
+                            const isToday = day.date === new Date().toISOString().split('T')[0];
+                            
+                            return (
+                              <div
+                                key={`label-${i}`}
+                                style={{
+                                  position: 'absolute',
+                                  left: `${x}%`,
+                                  bottom: `${180 - y + 20}px`,
+                                  transform: 'translateX(-50%)',
+                                  fontSize: '11px',
+                                  fontWeight: '600',
+                                  color: chartColor,
+                                }}
+                              >
+                                {Math.round(day[chartType])}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* 统计卡片 */}
+                      <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(2, 1fr)',
+                        gap: '12px',
+                      }}>
+                        <div style={{
+                          background: 'white',
+                          border: '1px solid #f5f5f7',
+                          borderRadius: '12px',
+                          padding: '16px',
+                        }}>
+                          <div style={{
+                            fontSize: '13px',
+                            color: '#86868b',
+                            marginBottom: '8px',
+                          }}>最高值</div>
+                          <div style={{
+                            fontSize: '24px',
+                            fontWeight: '700',
+                            color: chartColor,
+                          }}>
+                            {Math.round(maxValue)}
+                          </div>
+                          <div style={{
+                            fontSize: '12px',
+                            color: '#86868b',
+                          }}>{unit}</div>
+                        </div>
+
+                        <div style={{
+                          background: 'white',
+                          border: '1px solid #f5f5f7',
+                          borderRadius: '12px',
+                          padding: '16px',
+                        }}>
+                          <div style={{
+                            fontSize: '13px',
+                            color: '#86868b',
+                            marginBottom: '8px',
+                          }}>总计（7天）</div>
+                          <div style={{
+                            fontSize: '24px',
+                            fontWeight: '700',
+                            color: chartColor,
+                          }}>
+                            {Math.round(last7Days.reduce((sum, d) => sum + d[chartType], 0))}
+                          </div>
+                          <div style={{
+                            fontSize: '12px',
+                            color: '#86868b',
+                          }}>{unit}</div>
+                        </div>
+                      </div>
+
+                      {/* 建议 */}
+                      {chartType === 'calories' && (
+                        <div style={{
+                          marginTop: '16px',
+                          background: '#e5f2ff',
+                          borderRadius: '12px',
+                          padding: '16px',
+                        }}>
+                          <div style={{
+                            fontSize: '13px',
+                            color: '#007aff',
+                            fontWeight: '600',
+                            marginBottom: '4px',
+                          }}>💡 小贴士</div>
+                          <div style={{
+                            fontSize: '13px',
+                            color: '#1d1d1f',
+                            lineHeight: '1.5',
+                          }}>
+                            {Math.round(last7Days.reduce((sum, d) => sum + d.calories, 0) / 7) < 1500
+                              ? '你的平均摄入较低，注意营养均衡哦！'
+                              : Math.round(last7Days.reduce((sum, d) => sum + d.calories, 0) / 7) > 2500
+                              ? '平均摄入较高，可以适当控制一下饮食。'
+                              : '摄入量保持在健康范围内，继续保持！'}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()
               )}
             </div>
           </div>
@@ -876,6 +2051,18 @@ const CalorieTrackerApp = () => {
         @keyframes spin {
           from { transform: translateY(-50%) rotate(0deg); }
           to { transform: translateY(-50%) rotate(360deg); }
+        }
+        @keyframes scaleIn {
+          from { transform: scale(0); opacity: 0; }
+          to { transform: scale(1); opacity: 1; }
+        }
+        @keyframes drawLine {
+          from { 
+            stroke-dashoffset: 1000;
+          }
+          to { 
+            stroke-dashoffset: 0;
+          }
         }
       `}</style>
     </div>
